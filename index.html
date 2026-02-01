@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>webchat</title>
+
+<style>
+:root{
+  --bg:#05060f;
+  --panel:#0d1024;
+  --glass:rgba(255,255,255,0.07);
+  --accent:#6df0ff;
+  --accent2:#7b7cff;
+  --sent:#6df0ff;
+  --received:#1c2140;
+  --text:#eef1ff;
+  --muted:#9aa2ff;
+}
+*{margin:0;padding:0;box-sizing:border-box;font-family:Inter,Segoe UI,sans-serif;}
+body{
+  background:radial-gradient(circle at top,#0b0f3a,#05060f);
+  height:100vh;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  color:var(--text);
+}
+#authBox{
+  width:360px;background:var(--glass);backdrop-filter:blur(20px);
+  padding:30px;border-radius:18px;
+}
+#authBox h1{text-align:center;color:var(--accent);}
+#authBox input{
+  width:100%;padding:14px;margin:12px 0;
+  border:none;border-radius:12px;background:#151a3d;color:white;
+}
+#authBox button{
+  width:100%;padding:14px;border:none;border-radius:14px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  font-weight:600;cursor:pointer;color:#05060f;
+}
+#appBox{
+  width:95%;max-width:1350px;height:92vh;display:none;
+  background:var(--glass);backdrop-filter:blur(22px);
+  border-radius:22px;overflow:hidden;
+}
+.sidebar{
+  width:320px;background:var(--panel);
+  display:flex;flex-direction:column;
+}
+.sidebar h2{padding:20px;color:var(--accent);}
+.search input{
+  width:90%;margin:10px;padding:10px;
+  border:none;border-radius:10px;background:#151a3d;color:white;
+}
+.chat-list{flex:1;overflow:auto;}
+.chat-item{
+  padding:15px;cursor:pointer;display:flex;gap:10px;
+}
+.chat-item:hover{background:rgba(255,255,255,.05);}
+.chat{
+  flex:1;display:flex;flex-direction:column;
+}
+.chat-header{
+  padding:20px;
+  border-bottom:1px solid rgba(255,255,255,.1);
+}
+.chat-header small{
+  color:var(--muted);
+}
+.messages{
+  flex:1;padding:20px;overflow:auto;
+  display:flex;flex-direction:column;
+}
+.msg{
+  max-width:70%;
+  padding:10px 12px;
+  border-radius:15px;
+  margin-bottom:6px;
+  animation:fadeUp .15s ease;
+}
+.msg time{
+  display:block;
+  font-size:11px;
+  opacity:.6;
+  margin-top:4px;
+}
+.sent{
+  margin-left:auto;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#05060f;
+}
+.received{
+  background:#1c2140;
+}
+.empty{
+  margin:auto;
+  opacity:.5;
+}
+.input{
+  padding:15px;
+  display:flex;
+  gap:10px;
+}
+.input input{
+  flex:1;padding:12px;
+  border:none;border-radius:20px;
+  background:#151a3d;color:white;
+}
+.input button{
+  width:50px;border:none;border-radius:50%;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  cursor:pointer;
+}
+@keyframes fadeUp{
+  from{transform:translateY(6px);opacity:0}
+  to{transform:none;opacity:1}
+}
+@media(max-width:768px){
+  .sidebar{width:100px}
+  .sidebar h2{display:none}
+}
+</style>
+</head>
+
+<body>
+
+<div id="authBox">
+  <h1>webchat</h1>
+  <input id="email" placeholder="Email">
+  <input id="pass" type="password" placeholder="Password">
+  <button onclick="login()">Login / Register</button>
+</div>
+
+<div id="appBox">
+  <div class="sidebar">
+    <button onclick="logout()" style="
+      margin:10px;padding:10px;border:none;border-radius:10px;
+      background:#ff5c5c;color:white;cursor:pointer;">
+      Logout
+    </button>
+    <h2>Chats</h2>
+    <div class="search">
+      <input id="searchEmail" placeholder="Search by email"
+             onkeydown="if(event.key==='Enter')findUser()">
+    </div>
+    <div class="chat-list" id="chatList"></div>
+  </div>
+
+  <div class="chat">
+    <div class="chat-header">
+      <h3 id="chatTitle">Select a chat</h3>
+      <small id="typing"></small>
+    </div>
+    <div class="messages" id="messages">
+      <div class="empty">No chat selected</div>
+    </div>
+    <div class="input">
+      <input id="msgInput" placeholder="Type a message"
+             onkeydown="if(event.key==='Enter')send()">
+      <button onclick="send()">➤</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+<script>
+firebase.initializeApp({
+  apiKey: "AIzaSyD_8k3yfYN5C6kPrVFrUtFP4_6_-E4fJbk",
+  authDomain: "webchat-31202.firebaseapp.com",
+  projectId: "webchat-31202"
+});
+
+const auth = firebase.auth();
+const db   = firebase.firestore();
+
+const authBox = document.getElementById("authBox");
+const appBox  = document.getElementById("appBox");
+// We need to grab these elements so the new code can use them
+const chatList = document.getElementById("chatList");
+const chatTitle = document.getElementById("chatTitle");
+const messages = document.getElementById("messages");
+const msgInput = document.getElementById("msgInput");
+const searchEmail = document.getElementById("searchEmail");
+const email = document.getElementById("email");
+const pass = document.getElementById("pass");
+
+let activeChat = null;
+let unsubscribe = null;
+let lastMsgCount = 0;
+
+/* ---------- AUTH ---------- */
+
+function login(){
+  const e = email.value.trim();
+  const p = pass.value.trim();
+  if(!e || !p) return alert("Fill all fields");
+  if(p.length < 6) return alert("Password must be 6+ characters");
+
+  auth.setPersistence(firebase.auth.Auth.Persistence.SESSION)
+    .then(()=>auth.signInWithEmailAndPassword(e,p))
+    .then(start)
+    .catch(err=>{
+      if(err.code==="auth/user-not-found"){
+        auth.createUserWithEmailAndPassword(e,p)
+          .then(start)
+          .catch(e=>alert(e.message));
+      }else alert(err.message);
+    });
+}
+
+function logout(){
+  auth.signOut().then(()=>location.reload());
+}
+
+function start(){
+  authBox.style.display="none";
+  appBox.style.display="flex";
+  const u=auth.currentUser;
+  
+  db.collection("users").doc(u.uid).set({
+    email:u.email, uid:u.uid, online:true
+  },{merge:true});
+
+  // --- NEW: Load the sidebar list ---
+  loadRecentChats();
+}
+
+/* ---------- CHAT ---------- */
+
+// --- NEW FUNCTION: Loads previous chat partners into sidebar ---
+function loadRecentChats(){
+  const myUid = auth.currentUser.uid;
+  
+  db.collection("users").doc(myUid).collection("recentChats")
+    .orderBy("time", "desc")
+    .onSnapshot(snap => {
+      chatList.innerHTML = ""; 
+      
+      snap.forEach(doc => {
+        const data = doc.data();
+        const div = document.createElement("div");
+        div.className = "chat-item";
+        div.innerHTML = `
+          <div style="flex:1">
+            <div style="font-weight:600">${data.email}</div>
+            <div style="font-size:12px;opacity:0.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">
+               ${data.lastMsg}
+            </div>
+          </div>
+        `;
+        div.onclick = () => openChat({ uid: data.otherUid, email: data.email });
+        chatList.appendChild(div);
+      });
+    });
+}
+
+function findUser(){
+  const mail=searchEmail.value.trim();
+  if(!mail) return;
+  db.collection("users").where("email","==",mail).get()
+    .then(snap=>{
+      if(snap.empty) return alert("User not found");
+      snap.forEach(doc=>openChat(doc.data()));
+    });
+}
+
+function openChat(other){
+  const me=auth.currentUser.uid;
+  activeChat=[me,other.uid].sort().join("_");
+  chatTitle.textContent=other.email;
+  loadMessages();
+}
+
+function loadMessages(){
+  if(unsubscribe) unsubscribe();
+  messages.innerHTML="";
+  lastMsgCount=0;
+
+  unsubscribe=db.collection("messages")
+    .doc(activeChat)
+    .collection("chat")
+    .orderBy("time")
+    .onSnapshot(snap=>{
+      if(snap.size===lastMsgCount) return; 
+      lastMsgCount=snap.size;
+      messages.innerHTML="";
+      snap.forEach(d=>{
+        const m=d.data();
+        const div=document.createElement("div");
+        div.className="msg "+(m.sender===auth.currentUser.uid?"sent":"received");
+        div.innerHTML=`
+          ${m.text}
+          <time>${m.time?.toDate?.().toLocaleTimeString()||""}</time>
+        `;
+        messages.appendChild(div);
+      });
+      messages.scrollTop=messages.scrollHeight;
+    });
+}
+
+// --- UPDATED SEND FUNCTION ---
+function send(){
+  const text=msgInput.value.trim();
+  if(!text||!activeChat) return;
+
+  const myUid = auth.currentUser.uid;
+  const time = firebase.firestore.FieldValue.serverTimestamp();
+
+  // 1. Send Message
+  db.collection("messages").doc(activeChat)
+    .collection("chat").add({
+      text,
+      sender:myUid,
+      time:time
+    });
+
+  // 2. Calculate IDs for Recent Chats
+  const ids = activeChat.split("_");
+  const otherUid = ids[0] === myUid ? ids[1] : ids[0];
+  const otherEmail = chatTitle.textContent; 
+
+  // 3. Update MY sidebar
+  db.collection("users").doc(myUid).collection("recentChats").doc(otherUid).set({
+    email: otherEmail,
+    otherUid: otherUid,
+    lastMsg: "You: " + text,
+    time: time
+  });
+
+  // 4. Update THEIR sidebar
+  db.collection("users").doc(otherUid).collection("recentChats").doc(myUid).set({
+    email: auth.currentUser.email,
+    otherUid: myUid,
+    lastMsg: text,
+    time: time
+  });
+
+  msgInput.value="";
+}
+</script>
+</body>
+</html>
