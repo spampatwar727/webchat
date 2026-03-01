@@ -67,6 +67,30 @@ button { cursor: pointer; border: none; background: none; }
 /* ═══════════════════════════════════════════════════════════
    AUTH SCREEN
    ═══════════════════════════════════════════════════════════ */
+
+.auth-loading {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.auth-loading::after {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border: 2px solid #fff;
+  border-top: 2px solid transparent;
+  border-radius: 50%;
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: translateY(-50%) rotate(360deg); }
+}
+
 .auth-screen {
   height: 100vh;
   display: flex;
@@ -1290,7 +1314,9 @@ button { cursor: pointer; border: none; background: none; }
         <label>Password</label>
         <input type="password" id="authPassword" placeholder="Enter password" required>
       </div>
-      <button type="submit" class="btn-primary">Sign In / Create Account</button>
+      <button type="submit" class="btn-primary" id="authBtn">
+        <span id="authBtnText">Sign In / Create Account</span>
+      </button>
     </form>
   </div>
 </div>
@@ -1465,7 +1491,7 @@ button { cursor: pointer; border: none; background: none; }
 'use strict';
 
 firebase.initializeApp({
-  apiKey: "AIzaSyD_8k3yfYN5C6kPrVFrUtFP4_6_-E4fJbk",
+  apiKey: "AIzaSyAJPxHary4ODlF-ay49bBmX0ktLFKFFvSc",
   authDomain: "webchat-31202.firebaseapp.com",
   projectId: "webchat-31202",
   storageBucket: "webchat-31202.appspot.com"
@@ -1546,61 +1572,72 @@ function updateOnlineStatus(isOnline) {
   }, { merge: true });
 }
 
-// AUTH
 window.handleAuth = async function(e) {
   e.preventDefault();
+
   const username = document.getElementById('authUsername').value.trim().toLowerCase();
   const password = document.getElementById('authPassword').value.trim();
-  
+
   if (!username || !password) {
     alert('Please fill all fields');
     return;
   }
-  
+
   if (password.length < 6) {
     alert('Password must be 6+ characters');
     return;
   }
-  
+
   if (!/^[a-z0-9_]+$/.test(username)) {
     alert('Username can only contain lowercase letters, numbers, and underscores');
     return;
   }
-  
+
+  // ✅ START LOADER HERE (after validation)
+  const authBtn = document.getElementById('authBtn');
+  const authBtnText = document.getElementById('authBtnText');
+
+  authBtn.classList.add('auth-loading');
+  authBtnText.textContent = "Please wait...";
+
   const email = `${username}@webchat.com`;
-  
+
   try {
     await auth.setPersistence(firebase.auth.Auth.Persistence.SESSION);
-    
-    // STRATEGY: Try to Create Account first (Write permission usually doesn't need DB read)
+
     try {
       const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-      
-      // If successful, save the username to Firestore
+
       await db.collection('users').doc(userCredential.user.uid).set({
         username: username,
         uid: userCredential.user.uid,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         online: true
       });
-      
+
     } catch (createErr) {
-      // If error is "Email already in use", it means the user exists. Try Logging in.
+
       if (createErr.code === 'auth/email-already-in-use') {
         await auth.signInWithEmailAndPassword(email, password);
       } else {
-        // Genuine creation error (e.g., weak password)
         throw createErr;
       }
+
     }
-    
+
   } catch (err) {
     console.error(err);
+
     if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
       alert('Incorrect password');
     } else {
       alert(err.message);
     }
+
+  } finally {
+    // ✅ STOP LOADER HERE (always runs)
+    authBtn.classList.remove('auth-loading');
+    authBtnText.textContent = "Sign In / Create Account";
   }
 };
 
@@ -1646,6 +1683,15 @@ function initApp() {
   if (window.innerWidth <= 768) {
     sidebar.classList.add('mobile-visible');
   }
+
+  history.replaceState({ appOpen: true }, "");
+
+  window.addEventListener("popstate", function (e) {
+  if (chatArea.classList.contains("mobile-visible")) {
+    closeChatMobile();
+    history.pushState(null, "");
+  }
+  });
 }
 
 // CHAT LIST
@@ -1760,6 +1806,7 @@ async function openChat(chatData) {
   
   chatAvatar.textContent = getInitials(chatData.name);
   chatAvatar.className = 'user-avatar';
+
   if (chatData.isGroup) {
     chatAvatar.classList.add('group');
     groupInfoBtn.style.display = 'flex';
@@ -1783,6 +1830,7 @@ async function openChat(chatData) {
   if (window.innerWidth <= 768) {
     sidebar.classList.remove('mobile-visible');
     chatArea.classList.add('mobile-visible');
+    history.pushState({ chatOpen: true }, "");
   }
   
   markMessagesAsRead();
@@ -1818,12 +1866,36 @@ function loadMessages() {
     .doc(activeChat)
     .collection('chat')
     .orderBy('time', 'asc')
-    .onSnapshot(snap => {
+    .onSnapshot(async snap => {
+
+      // ✅ AUTO MARK AS READ WHEN CHAT IS OPEN
+      const unreadDocs = snap.docs.filter(d =>
+        d.data().sender !== currentUser.uid && d.data().read === false
+      );
+
+      if (unreadDocs.length) {
+        const batch = db.batch();
+
+        unreadDocs.forEach(d => {
+          batch.update(d.ref, { read: true });
+        });
+
+        await batch.commit();
+
+        await db.collection('users')
+          .doc(currentUser.uid)
+          .collection('recentChats')
+          .doc(activeChat)
+          .update({ unread: 0 });
+      }
+
+      // 🔽 YOUR EXISTING CODE CONTINUES
       messages.innerHTML = '';
       let lastDate = null;
       
       snap.forEach(doc => {
         const msg = doc.data();
+
         if (msg.time) {
           const msgDate = msg.time.toDate().toDateString();
           if (msgDate !== lastDate) {
@@ -1831,6 +1903,7 @@ function loadMessages() {
             addDateDivider(msg.time);
           }
         }
+
         renderMessage(msg, doc.id);
       });
       
@@ -1932,7 +2005,7 @@ async function markMessagesAsRead() {
       .doc(currentUser.uid)
       .collection('recentChats')
       .doc(activeChat)
-      .update({ unread: 0 });
+      .set({ unread: 0 }, { merge: true });
   } catch (err) {
     console.error(err);
   }
@@ -2301,22 +2374,6 @@ window.openGroupInfoModal = async function() {
 window.closeGroupInfoModal = function() {
   document.getElementById('groupInfoModal').classList.remove('active');
 };
-
-firebase.auth().onAuthStateChanged(user => {
-  if (!user) return;
-
-  currentUser = user; // IMPORTANT if you use currentUser
-  authBox.style.display = "none";
-  appBox.style.display = "flex";
-
-  db.collection("users").doc(user.uid).set({
-    uid: user.uid,
-    email: user.email || null,
-    username: currentUserData?.username || null,
-    online: true,
-    lastSeen: firebase.firestore.FieldValue.serverTimestamp()
-  }, { merge: true });
-});
 
 })();
 </script>
